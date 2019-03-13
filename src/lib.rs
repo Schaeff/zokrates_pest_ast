@@ -63,7 +63,7 @@ mod ast {
             Rule::op_gt => Expression::binary(BinaryOperator::Gt, lhs, rhs, span),
             Rule::op_inclusive_or => Expression::binary(BinaryOperator::Or, lhs, rhs, span),
             Rule::op_exclusive_or => Expression::binary(BinaryOperator::Xor, lhs, rhs, span),
-            _ => unimplemented!(),
+            _ => unreachable!(),
         })
     }
 
@@ -107,9 +107,9 @@ mod ast {
                             r => unreachable!("`primary_expression` should contain one of [`constant`, `identifier`], found {:#?}", r),
                         }
                     }
-                    Rule::postfix_expression => {
-                    	unimplemented!()
-                    },
+                    Rule::postfix_expression => Expression::Postfix(
+                        PostfixExpression::from_pest(&mut pair.into_inner()).unwrap(),
+                    ),
                     r => unreachable!("`term` should contain one of [`expression`, `conditional_expression`, `primary_expression`, `postfix_expression`], found {:#?}", r)
                 }
             }
@@ -123,7 +123,7 @@ mod ast {
     #[derive(Debug, FromPest, PartialEq)]
     #[pest_ast(rule(Rule::file))]
     pub struct File<'ast> {
-        pub imports: Vec<ImportDirective>,
+        pub imports: Vec<ImportDirective<'ast>>,
         pub functions: Vec<FunctionDefinition<'ast>>,
         pub eoi: EOI,
         #[pest_ast(outer())]
@@ -134,7 +134,8 @@ mod ast {
     #[pest_ast(rule(Rule::function_definition))]
     pub struct FunctionDefinition<'ast> {
         pub id: IdentifierExpression<'ast>,
-        pub returns: Option<Vec<Type>>,
+        pub parameters: Vec<Parameter<'ast>>,
+        pub returns: Vec<Type<'ast>>,
         pub statements: Vec<Statement<'ast>>,
         #[pest_ast(outer())]
         pub span: Span<'ast>,
@@ -142,20 +143,139 @@ mod ast {
 
     #[derive(Debug, FromPest, PartialEq)]
     #[pest_ast(rule(Rule::import_directive))]
-    pub struct ImportDirective {}
+    pub struct ImportDirective<'ast> {
+        pub source: ImportSource<'ast>,
+        pub alias: Option<IdentifierExpression<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
 
     #[derive(Debug, FromPest, PartialEq)]
-    #[pest_ast(rule(Rule::type_name))]
-    pub enum Type {
-        Field,
-        Boolean,
+    #[pest_ast(rule(Rule::import_source))]
+    pub struct ImportSource<'ast> {
+        #[pest_ast(outer(with(span_into_str)))]
+        pub value: String,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
     }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::ty))]
+    pub enum Type<'ast> {
+        Basic(BasicType<'ast>),
+        Array(ArrayType<'ast>),
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::ty_basic))]
+    pub enum BasicType<'ast> {
+        Field(FieldType),
+        Boolean(BooleanType<'ast>),
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::ty_field))]
+    pub struct FieldType {}
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::ty_array))]
+    pub struct ArrayType<'ast> {
+        ty: Box<BasicType<'ast>>,
+        size: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::ty_bool))]
+    pub struct BooleanType<'ast> {
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::parameter))]
+    pub struct Parameter<'ast> {
+        pub visibility: Option<Visibility>,
+        pub ty: Type<'ast>,
+        pub id: IdentifierExpression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::vis))]
+    pub enum Visibility {
+        Public(PublicVisibility),
+        Private(PrivateVisibility),
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::vis_public))]
+    pub struct PublicVisibility {}
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::vis_private))]
+    pub struct PrivateVisibility {}
 
     #[derive(Debug, FromPest, PartialEq)]
     #[pest_ast(rule(Rule::statement))]
     pub enum Statement<'ast> {
         Return(ReturnStatement<'ast>),
+        Definition(DefinitionStatement<'ast>),
+        Assertion(AssertionStatement<'ast>),
+        Iteration(IterationStatement<'ast>),
+        Assignment(AssignmentStatement<'ast>),
     }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::definition_statement))]
+    pub struct DefinitionStatement<'ast> {
+        pub ty: Type<'ast>,
+        pub id: IdentifierExpression<'ast>,
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::assignment_statement))]
+    pub struct AssignmentStatement<'ast> {
+        pub assignee: Assignee<'ast>,
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::expression_statement))]
+    pub struct AssertionStatement<'ast> {
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::iteration_statement))]
+    pub struct IterationStatement<'ast> {
+        pub ty: Type<'ast>,
+        pub index: IdentifierExpression<'ast>,
+        pub from: Expression<'ast>,
+        pub to: Expression<'ast>,
+        pub statements: Vec<Statement<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::expression_statement))]
+    pub struct MultiAssignmentStatement<'ast> {
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    // MultipleDefinition(Vec<AssigneeNode<T>>, ExpressionNode<T>),
 
     #[derive(Debug, FromPest, PartialEq)]
     #[pest_ast(rule(Rule::return_statement))]
@@ -194,8 +314,25 @@ mod ast {
     pub enum Expression<'ast> {
         Ternary(TernaryExpression<'ast>),
         Binary(BinaryExpression<'ast>),
+        Postfix(PostfixExpression<'ast>),
         Identifier(IdentifierExpression<'ast>),
         Constant(ConstantExpression<'ast>),
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::postfix_expression))]
+    pub struct PostfixExpression<'ast> {
+        id: IdentifierExpression<'ast>,
+        access: Vec<Access<'ast>>,
+        #[pest_ast(outer())]
+        span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::access))]
+    pub enum Access<'ast> {
+        Call(ExpressionList<'ast>),
+        Select(Expression<'ast>),
     }
 
     #[derive(Debug, PartialEq)]
@@ -251,6 +388,7 @@ mod ast {
                 Expression::Identifier(i) => &i.span,
                 Expression::Constant(c) => &c.span,
                 Expression::Ternary(t) => &t.span,
+                Expression::Postfix(p) => &p.span,
             }
         }
     }
@@ -296,6 +434,15 @@ mod ast {
         pub span: Span<'ast>,
     }
 
+    #[derive(Debug, FromPest, PartialEq)]
+    #[pest_ast(rule(Rule::assignee))]
+    pub struct Assignee<'ast> {
+        pub id: IdentifierExpression<'ast>, // a
+        pub indices: Vec<Expression<'ast>>, // [42 + x][31][7]
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
     fn span_into_str(span: Span) -> String {
         span.as_str().to_string()
     }
@@ -315,6 +462,7 @@ impl<'ast> From<Pairs<'ast, Rule>> for FieldPrimeProg<'ast> {
 
 pub fn generate_ast(input: &str) -> Result<ast::File, Error<Rule>> {
     let parse_tree = parse(input).map_err(|e| e)?;
+    //println!("{:#?}", parse_tree);
     Ok(FieldPrimeProg::from(parse_tree).0)
 }
 
@@ -323,6 +471,29 @@ mod tests {
     use super::ast::*;
     use super::*;
     use pest::Span;
+
+    // #[test]
+    // fn examples() {
+    //     use glob::glob;
+    //     use std::fs;
+    //     use std::io::Read;
+    //     // Traverse all .code files in examples dir
+    //     for entry in glob("../ZoKratesGrammarSpecPEG/examples/**/*.code")
+    //         .expect("Failed to read glob pattern")
+    //     {
+    //         match entry {
+    //             Ok(path) => {
+    //                 println!("Parsing {:?}", path.display());
+    //                 let mut file = fs::File::open(path).unwrap();
+    //                 let mut data = String::new();
+    //                 file.read_to_string(&mut data).unwrap();
+    //                 let _res = generate_ast(&data).unwrap();
+    //                 //println!("{:#?}", res);
+    //             }
+    //             Err(e) => println!("{:?}", e),
+    //         }
+    //     }
+    // }
 
     impl<'ast> Expression<'ast> {
         pub fn add(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
@@ -365,7 +536,8 @@ mod tests {
                         value: String::from("main"),
                         span: Span::new(&source, 33, 37).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
                         expressions: ExpressionList {
                             values: vec![Expression::add(
@@ -385,7 +557,14 @@ mod tests {
                     })],
                     span: Span::new(&source, 29, source.len()).unwrap(),
                 }],
-                imports: vec![ImportDirective {}],
+                imports: vec![ImportDirective {
+                    source: ImportSource {
+                        value: String::from("foo"),
+                        span: Span::new(&source, 8, 11).unwrap()
+                    },
+                    alias: None,
+                    span: Span::new(&source, 0, 29).unwrap()
+                }],
                 eoi: EOI {},
                 span: Span::new(&source, 0, 65).unwrap()
             })
@@ -405,7 +584,8 @@ mod tests {
                         value: String::from("main"),
                         span: Span::new(&source, 33, 37).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
                         expressions: ExpressionList {
                             values: vec![Expression::add(
@@ -439,7 +619,14 @@ mod tests {
                     })],
                     span: Span::new(&source, 29, 74).unwrap(),
                 }],
-                imports: vec![ImportDirective {}],
+                imports: vec![ImportDirective {
+                    source: ImportSource {
+                        value: String::from("foo"),
+                        span: Span::new(&source, 8, 11).unwrap()
+                    },
+                    alias: None,
+                    span: Span::new(&source, 0, 29).unwrap()
+                }],
                 eoi: EOI {},
                 span: Span::new(&source, 0, 74).unwrap()
             })
@@ -459,7 +646,8 @@ mod tests {
                         value: String::from("main"),
                         span: Span::new(&source, 33, 37).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
                         expressions: ExpressionList {
                             values: vec![Expression::if_else(
@@ -483,7 +671,14 @@ mod tests {
                     })],
                     span: Span::new(&source, 29, 81).unwrap(),
                 }],
-                imports: vec![ImportDirective {}],
+                imports: vec![ImportDirective {
+                    source: ImportSource {
+                        value: String::from("foo"),
+                        span: Span::new(&source, 8, 11).unwrap()
+                    },
+                    alias: None,
+                    span: Span::new(&source, 0, 29).unwrap()
+                }],
                 eoi: EOI {},
                 span: Span::new(&source, 0, 81).unwrap()
             })
@@ -502,7 +697,8 @@ mod tests {
                         value: String::from("main"),
                         span: Span::new(&source, 4, 8).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
                         expressions: ExpressionList {
                             values: vec![Expression::Constant(ConstantExpression {
@@ -520,5 +716,22 @@ mod tests {
                 span: Span::new(&source, 0, 34).unwrap()
             })
         );
+    }
+
+    #[test]
+    fn playground() {
+        let source = r#"import "heyman" as yo
+        def main(private field[23] a) -> (bool[234 + 6]):
+        field a = 1
+        a[32 + x][55] = y
+        for field i in 0..3 do
+        	a == 1 + 2 + 3+ 4+ 5+ 6+ 6+ 7+ 8 + 4+ 5+ 3+ 4+ 2+ 3 
+        endfor
+        a == 1
+        return a
+"#;
+        let res = generate_ast(&source);
+        println!("{:#?}", generate_ast(&source));
+        assert!(res.is_ok());
     }
 }
