@@ -37,82 +37,87 @@ mod ast {
         ])
     }
 
-    // this is only defined when `pair` is an operator
+    // Create an Expression from left and right terms and an operator
+    // Precondition: `pair` MUST be a binary operator
     fn infix_rule<'ast>(
         lhs: Box<Expression<'ast>>,
         pair: Pair<'ast, Rule>,
         rhs: Box<Expression<'ast>>,
     ) -> Box<Expression<'ast>> {
-        let (start, _) = lhs.span().split();
-        let (_, end) = rhs.span().split();
+        // a + b spans from the start of a to the end of b
+        let (start, _) = lhs.span().clone().split();
+        let (_, end) = rhs.span().clone().split();
         let span = start.span(&end);
-        match pair.as_rule() {
-            Rule::op_add => Box::new(Expression::binary(BinaryOperator::Add, lhs, rhs, span)),
-            Rule::op_sub => Box::new(Expression::binary(BinaryOperator::Sub, lhs, rhs, span)),
-            Rule::op_mul => Box::new(Expression::binary(BinaryOperator::Mul, lhs, rhs, span)),
-            Rule::op_div => Box::new(Expression::binary(BinaryOperator::Div, lhs, rhs, span)),
-            Rule::op_pow => Box::new(Expression::binary(BinaryOperator::Pow, lhs, rhs, span)),
-            Rule::op_equal => Box::new(Expression::binary(BinaryOperator::Eq, lhs, rhs, span)),
-            Rule::op_not_equal => {
-                Box::new(Expression::binary(BinaryOperator::NotEq, lhs, rhs, span))
-            }
-            Rule::op_lte => Box::new(Expression::binary(BinaryOperator::Lte, lhs, rhs, span)),
-            Rule::op_lt => Box::new(Expression::binary(BinaryOperator::Lt, lhs, rhs, span)),
-            Rule::op_gte => Box::new(Expression::binary(BinaryOperator::Gte, lhs, rhs, span)),
-            Rule::op_gt => Box::new(Expression::binary(BinaryOperator::Gt, lhs, rhs, span)),
-            Rule::op_inclusive_or => {
-                Box::new(Expression::binary(BinaryOperator::Or, lhs, rhs, span))
-            }
-            Rule::op_exclusive_or => {
-                Box::new(Expression::binary(BinaryOperator::Xor, lhs, rhs, span))
-            }
+
+        Box::new(match pair.as_rule() {
+            Rule::op_add => Expression::binary(BinaryOperator::Add, lhs, rhs, span),
+            Rule::op_sub => Expression::binary(BinaryOperator::Sub, lhs, rhs, span),
+            Rule::op_mul => Expression::binary(BinaryOperator::Mul, lhs, rhs, span),
+            Rule::op_div => Expression::binary(BinaryOperator::Div, lhs, rhs, span),
+            Rule::op_pow => Expression::binary(BinaryOperator::Pow, lhs, rhs, span),
+            Rule::op_equal => Expression::binary(BinaryOperator::Eq, lhs, rhs, span),
+            Rule::op_not_equal => Expression::binary(BinaryOperator::NotEq, lhs, rhs, span),
+            Rule::op_lte => Expression::binary(BinaryOperator::Lte, lhs, rhs, span),
+            Rule::op_lt => Expression::binary(BinaryOperator::Lt, lhs, rhs, span),
+            Rule::op_gte => Expression::binary(BinaryOperator::Gte, lhs, rhs, span),
+            Rule::op_gt => Expression::binary(BinaryOperator::Gt, lhs, rhs, span),
+            Rule::op_inclusive_or => Expression::binary(BinaryOperator::Or, lhs, rhs, span),
+            Rule::op_exclusive_or => Expression::binary(BinaryOperator::Xor, lhs, rhs, span),
             _ => unimplemented!(),
-        }
+        })
     }
 
+    // Create an Expression from an `expression`. `build_factor` turns each term into an `Expression` and `infix_rule` turns each (Expression, operator, Expression) into an Expression
     pub fn climb(pair: Pair<Rule>) -> Box<Expression> {
-        //println!("CLIMB: {:?}\n", pair);
         PREC_CLIMBER.climb(pair.into_inner(), build_factor, infix_rule)
     }
 
+    // Create an Expression from a `term`.
+    // Precondition: `pair` MUST be a term
     fn build_factor(pair: Pair<Rule>) -> Box<Expression> {
-        match pair.as_rule() {
-            // all factors are terms
+        Box::new(match pair.as_rule() {
+            // all factors are terms TODO rename factor to term?
             Rule::term => {
-                // clone the pair to peak into what we should create
+                // clone the pair to peek into what we should create
                 let clone = pair.clone();
                 // define the child pair
                 let next = clone.into_inner().next().unwrap();
                 match next.as_rule() {
-                    Rule::expression => {
-                        Box::new(Expression::from_pest(&mut pair.into_inner()).unwrap())
-                    }
-                    Rule::conditional_expression => Box::new(Expression::Ternary(
+                    // this happens when we have an expression in parentheses: it needs to be processed as another sequence of terms and operators
+                    Rule::expression => Expression::from_pest(&mut pair.into_inner()).unwrap(),
+                    Rule::conditional_expression => Expression::Ternary(
                         TernaryExpression::from_pest(&mut pair.into_inner()).unwrap(),
-                    )),
+                    ),
                     Rule::primary_expression => {
+                        // maybe this could be simplified
                         let next = next.into_inner().next().unwrap();
                         match next.as_rule() {
-                            Rule::constant => Box::new(Expression::Constant(
+                            Rule::constant => Expression::Constant(
                                 ConstantExpression::from_pest(
                                     &mut pair.into_inner().next().unwrap().into_inner(),
                                 )
                                 .unwrap(),
-                            )),
-                            Rule::identifier => Box::new(Expression::Identifier(
+                            ),
+                            Rule::identifier => Expression::Identifier(
                                 IdentifierExpression::from_pest(
                                     &mut pair.into_inner().next().unwrap().into_inner(),
                                 )
                                 .unwrap(),
-                            )),
-                            _ => unimplemented!(),
+                            ),
+                            r => unreachable!("`primary_expression` should contain one of [`constant`, `identifier`], found {:#?}", r),
                         }
                     }
-                    _ => unimplemented!(),
+                    Rule::postfix_expression => {
+                    	unimplemented!()
+                    },
+                    r => unreachable!("`term` should contain one of [`expression`, `conditional_expression`, `primary_expression`, `postfix_expression`], found {:#?}", r)
                 }
             }
-            _ => unimplemented!(),
-        }
+            r => unreachable!(
+                "`build_factor` can only be called on `term`, found {:#?}",
+                r
+            ),
+        })
     }
 
     #[derive(Debug, FromPest, PartialEq)]
@@ -212,6 +217,20 @@ mod ast {
     }
 
     impl<'ast> Expression<'ast> {
+        pub fn ternary(
+            first: Box<Expression<'ast>>,
+            second: Box<Expression<'ast>>,
+            third: Box<Expression<'ast>>,
+            span: Span<'ast>,
+        ) -> Self {
+            Expression::Ternary(TernaryExpression {
+                first,
+                second,
+                third,
+                span,
+            })
+        }
+
         pub fn binary(
             op: BinaryOperator,
             left: Box<Expression<'ast>>,
@@ -225,42 +244,13 @@ mod ast {
                 span,
             })
         }
-        #[cfg(test)]
-        pub fn add(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
-            Self::binary(BinaryOperator::Add, Box::new(left), Box::new(right), span)
-        }
 
-        #[cfg(test)]
-        pub fn mul(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
-            Self::binary(BinaryOperator::Mul, Box::new(left), Box::new(right), span)
-        }
-
-        #[cfg(test)]
-        pub fn pow(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
-            Self::binary(BinaryOperator::Pow, Box::new(left), Box::new(right), span)
-        }
-
-        #[cfg(test)]
-        pub fn if_else(
-            condition: Expression<'ast>,
-            consequence: Expression<'ast>,
-            alternative: Expression<'ast>,
-            span: Span<'ast>,
-        ) -> Self {
-            Expression::Ternary(TernaryExpression {
-                first: Box::new(condition),
-                second: Box::new(consequence),
-                third: Box::new(alternative),
-                span,
-            })
-        }
-
-        pub fn span(&self) -> Span<'ast> {
+        pub fn span(&self) -> &Span<'ast> {
             match self {
-                Expression::Binary(b) => b.span.clone(),
-                Expression::Identifier(i) => i.span.clone(),
-                Expression::Constant(c) => c.span.clone(),
-                Expression::Ternary(t) => t.span.clone(),
+                Expression::Binary(b) => &b.span,
+                Expression::Identifier(i) => &i.span,
+                Expression::Constant(c) => &c.span,
+                Expression::Ternary(t) => &t.span,
             }
         }
     }
@@ -269,26 +259,22 @@ mod ast {
         type Rule = Rule;
         type FatalError = Void;
 
-        // we implement AST creation manually here
-        // `pest` should yield an `expression` which we can generate AST with based on precedence rules
+        // We implement AST creation manually here for Expression
+        // `pest` should yield an `expression` which we can generate AST with, based on precedence rules
         fn from_pest(pest: &mut Pairs<'ast, Rule>) -> Result<Self, ConversionError<Void>> {
             // get a clone to "try" to match
             let mut clone = pest.clone();
             // advance by one pair in the clone, if none error out, `pest` is still the original
             let pair = clone.next().ok_or(::from_pest::ConversionError::NoMatch)?;
             // this should be an expression
-            let res = match pair.as_rule() {
-                Rule::expression => climb(pair),
-                //Rule::conditional_expression => Box::new(Expression::Ternary(TernaryExpression::from_pest(&mut pair.into_inner()).unwrap())),
-                _ => {
-                    return Err(ConversionError::NoMatch);
+            match pair.as_rule() {
+                Rule::expression => {
+                    // we can replace `pest` with the clone we tried with and got pairs from to create the AST
+                    *pest = clone;
+                    Ok(*climb(pair))
                 }
-            };
-
-            // we can replace `pest` with the clone we tried with and got pairs from to create the AST
-
-            *pest = clone;
-            Ok(*res)
+                _ => Err(ConversionError::NoMatch),
+            }
         }
     }
 
@@ -323,14 +309,7 @@ struct FieldPrimeProg<'ast>(ast::File<'ast>);
 
 impl<'ast> From<Pairs<'ast, Rule>> for FieldPrimeProg<'ast> {
     fn from(mut pairs: Pairs<'ast, Rule>) -> FieldPrimeProg<'ast> {
-        FieldPrimeProg(
-            ast::File::from_pest(&mut pairs)
-                .map_err(|e| {
-                    println!("{:?}", e);
-                    e
-                })
-                .unwrap(),
-        )
+        FieldPrimeProg(ast::File::from_pest(&mut pairs).unwrap())
     }
 }
 
@@ -344,6 +323,34 @@ mod tests {
     use super::ast::*;
     use super::*;
     use pest::Span;
+
+    impl<'ast> Expression<'ast> {
+        pub fn add(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
+            Self::binary(BinaryOperator::Add, Box::new(left), Box::new(right), span)
+        }
+
+        pub fn mul(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
+            Self::binary(BinaryOperator::Mul, Box::new(left), Box::new(right), span)
+        }
+
+        pub fn pow(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
+            Self::binary(BinaryOperator::Pow, Box::new(left), Box::new(right), span)
+        }
+
+        pub fn if_else(
+            condition: Expression<'ast>,
+            consequence: Expression<'ast>,
+            alternative: Expression<'ast>,
+            span: Span<'ast>,
+        ) -> Self {
+            Self::ternary(
+                Box::new(condition),
+                Box::new(consequence),
+                Box::new(alternative),
+                span,
+            )
+        }
+    }
 
     #[test]
     fn one_plus_one() {
