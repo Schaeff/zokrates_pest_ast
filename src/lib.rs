@@ -9,8 +9,8 @@ extern crate lazy_static;
 
 pub use ast::{
     ArrayType, AssertionStatement, Assignee, AssignmentStatement, BasicType, BinaryExpression,
-    BinaryOperator, ConstantExpression, DefinitionStatement, Expression, File, Function,
-    IdentifierExpression, IterationStatement, Parameter, ReturnStatement, Statement, Type,
+    BinaryOperator, ConstantExpression, DefinitionStatement, Expression, File, Function, PostfixExpression, Access, CallAccess, ArrayAccess,
+    IdentifierExpression, IterationStatement, Parameter, ReturnStatement, Statement, Type, MultiAssignmentStatement, TernaryExpression, InlineArrayExpression
 };
 
 mod ast {
@@ -328,18 +328,18 @@ mod ast {
     #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::postfix_expression))]
     pub struct PostfixExpression<'ast> {
-        id: IdentifierExpression<'ast>,
-        access: Vec<Access<'ast>>,
+        pub id: IdentifierExpression<'ast>,
+        pub access: Vec<Access<'ast>>,
         #[pest_ast(outer())]
-        span: Span<'ast>,
+        pub span: Span<'ast>,
     }
 
     #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::inline_array_expression))]
     pub struct InlineArrayExpression<'ast> {
-        expressions: Vec<Expression<'ast>>,
+        pub expressions: Vec<Expression<'ast>>,
         #[pest_ast(outer())]
-        span: Span<'ast>,
+        pub span: Span<'ast>,
     }
 
     #[derive(Debug, FromPest, PartialEq, Clone)]
@@ -361,17 +361,17 @@ mod ast {
     #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::call_access))]
     pub struct CallAccess<'ast> {
-        expressions: Vec<Expression<'ast>>,
+        pub expressions: Vec<Expression<'ast>>,
         #[pest_ast(outer())]
-        span: Span<'ast>,
+        pub span: Span<'ast>,
     }
 
     #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::array_access))]
     pub struct ArrayAccess<'ast> {
-        expression: Expression<'ast>,
+        pub expression: Expression<'ast>,
         #[pest_ast(outer())]
-        span: Span<'ast>,
+        pub span: Span<'ast>,
     }
 
     #[derive(Debug, PartialEq, Clone)]
@@ -385,11 +385,11 @@ mod ast {
     #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::conditional_expression))]
     pub struct TernaryExpression<'ast> {
-        first: Box<Expression<'ast>>,
-        second: Box<Expression<'ast>>,
-        third: Box<Expression<'ast>>,
+        pub first: Box<Expression<'ast>>,
+        pub second: Box<Expression<'ast>>,
+        pub third: Box<Expression<'ast>>,
         #[pest_ast(outer())]
-        span: Span<'ast>,
+        pub span: Span<'ast>,
     }
 
     impl<'ast> Expression<'ast> {
