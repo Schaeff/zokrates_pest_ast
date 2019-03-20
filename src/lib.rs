@@ -526,9 +526,7 @@ mod tests {
         use std::fs;
         use std::io::Read;
         // Traverse all .code files in examples dir
-        for entry in glob("examples/**/*.code")
-            .expect("Failed to read glob pattern")
-        {
+        for entry in glob("examples/**/*.code").expect("Failed to read glob pattern") {
             match entry {
                 Ok(path) => {
                     println!("Parsing {:?}", path.display());
