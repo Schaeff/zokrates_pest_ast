@@ -5,7 +5,7 @@ authors = ["schaeff <thibaut@schaeff.fr>"]
 edition = "2018"
 
 [dependencies]
-zokrates_pest = { git = "https://github.com/JacobEberhardt/ZoKratesGrammarSpecPEG", version = "0.1.0" }
+zokrates_pest = { git = "https://github.com/JacobEberhardt/ZoKratesGrammarSpecPEG", version = "0.1.0", branch = "better-unary" }
 zokrates_field = { git = "https://github.com/ZoKrates/ZoKrates" }
 pest = "2.0"
 pest-ast = "0.3.3"

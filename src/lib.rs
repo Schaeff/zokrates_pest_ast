@@ -8,7 +8,7 @@ use zokrates_pest::Rule;
 extern crate lazy_static;
 
 pub use ast::{
-    ArrayType, AssertionStatement, Assignee, AssignmentStatement, BasicType, BinaryExpression, ImportSource, ImportDirective,
+    ArrayType, AssertionStatement, Assignee, AssignmentStatement, BasicType, BinaryExpression, ImportSource, ImportDirective, UnaryExpression, UnaryOperator,
     BinaryOperator, ConstantExpression, DefinitionStatement, Expression, File, Function, PostfixExpression, Access, CallAccess, ArrayAccess,
     IdentifierExpression, IterationStatement, Parameter, ReturnStatement, Statement, Type, MultiAssignmentStatement, TernaryExpression, InlineArrayExpression
 };
@@ -121,7 +121,21 @@ mod ast {
                     Rule::inline_array_expression => Expression::InlineArray(
                         InlineArrayExpression::from_pest(&mut pair.into_inner()).unwrap(),
                     ),
-                    r => unreachable!("`term` should contain one of [`expression`, `conditional_expression`, `primary_expression`, `postfix_expression`], found {:#?}", r)
+                    Rule::unary_expression => {
+                        let span = next.as_span();
+                        let mut inner = next.into_inner();
+                        let op = match inner.next().unwrap().as_rule() {
+                            Rule::op_unary => UnaryOperator::from_pest(&mut pair.into_inner().next().unwrap().into_inner()).unwrap(),
+                            r => unreachable!("`unary_expression` should yield `op_unary`, found {:#?}", r)
+                        };
+                        let expression = build_factor(inner.next().unwrap());
+                        Expression::Unary(UnaryExpression {
+                            op,
+                            expression,
+                            span
+                        })
+                    },
+                    r => unreachable!("`term` should contain one of [`expression`, `conditional_expression`, `primary_expression`, `postfix_expression`, `inline_array_expression`, `unary_expression`], found {:#?}", r)
                 }
             }
             r => unreachable!(
@@ -315,6 +329,19 @@ mod ast {
         Pow,
     }
 
+    #[derive(Debug, PartialEq, FromPest, Clone)]
+    #[pest_ast(rule(Rule::op_unary))]
+    pub enum UnaryOperator<'ast> {
+        Not(Not<'ast>),
+    }
+
+    #[derive(Debug, PartialEq, FromPest, Clone)]
+    #[pest_ast(rule(Rule::op_not))]
+    pub struct Not<'ast> {
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
     #[derive(Debug, PartialEq, Clone)]
     pub enum Expression<'ast> {
         Ternary(TernaryExpression<'ast>),
@@ -323,6 +350,7 @@ mod ast {
         Identifier(IdentifierExpression<'ast>),
         Constant(ConstantExpression<'ast>),
         InlineArray(InlineArrayExpression<'ast>),
+        Unary(UnaryExpression<'ast>),
     }
 
     #[derive(Debug, FromPest, PartialEq, Clone)]
@@ -330,6 +358,15 @@ mod ast {
     pub struct PostfixExpression<'ast> {
         pub id: IdentifierExpression<'ast>,
         pub access: Vec<Access<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::unary_expression))]
+    pub struct UnaryExpression<'ast> {
+        pub op: UnaryOperator<'ast>,
+        pub expression: Box<Expression<'ast>>,
         #[pest_ast(outer())]
         pub span: Span<'ast>,
     }
@@ -429,6 +466,7 @@ mod ast {
                 Expression::Ternary(t) => &t.span,
                 Expression::Postfix(p) => &p.span,
                 Expression::InlineArray(a) => &a.span,
+                Expression::Unary(u) => &u.span,
             }
         }
     }
@@ -823,7 +861,7 @@ mod tests {
         field a = 1
         a[32 + x][55] = y
         for field i in 0..3 do
-        	a == 1 + 2 + 3+ 4+ 5+ 6+ 6+ 7+ 8 + 4+ 5+ 3+ 4+ 2+ 3 
+               a == 1 + 2 + 3+ 4+ 5+ 6+ 6+ 7+ 8 + 4+ 5+ 3+ 4+ 2+ 3 
         endfor
         a == 1
         return a
