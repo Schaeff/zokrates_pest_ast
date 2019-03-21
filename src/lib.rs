@@ -8,9 +8,12 @@ use zokrates_pest::Rule;
 extern crate lazy_static;
 
 pub use ast::{
-    ArrayType, AssertionStatement, Assignee, AssignmentStatement, BasicType, BinaryExpression, ImportSource, ImportDirective, UnaryExpression, UnaryOperator,
-    BinaryOperator, ConstantExpression, DefinitionStatement, Expression, File, Function, PostfixExpression, Access, CallAccess, ArrayAccess,
-    IdentifierExpression, IterationStatement, Parameter, ReturnStatement, Statement, Type, MultiAssignmentStatement, TernaryExpression, InlineArrayExpression
+    Access, ArrayAccess, ArrayType, AssertionStatement, Assignee, AssignmentStatement, BasicType,
+    BinaryExpression, BinaryOperator, CallAccess, ConstantExpression, DefinitionStatement,
+    Expression, File, Function, IdentifierExpression, ImportDirective, ImportSource,
+    InlineArrayExpression, IterationStatement, MultiAssignmentStatement, Parameter,
+    PostfixExpression, ReturnStatement, Statement, TernaryExpression, Type, UnaryExpression,
+    UnaryOperator,
 };
 
 mod ast {
