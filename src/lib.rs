@@ -13,7 +13,7 @@ pub use ast::{
     Expression, File, Function, IdentifierExpression, ImportDirective, ImportSource,
     InlineArrayExpression, IterationStatement, MultiAssignmentStatement, Parameter,
     PostfixExpression, ReturnStatement, Statement, TernaryExpression, Type, UnaryExpression,
-    UnaryOperator,
+    UnaryOperator, Visibility,
 };
 
 mod ast {
