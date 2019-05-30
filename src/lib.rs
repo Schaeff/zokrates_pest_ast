@@ -1,10 +1,20 @@
 use from_pest::FromPest;
-use pest::error::Error;
+use pest::error::Error as PestError;
 use pest::iterators::Pairs;
+use std::fmt;
 use zokrates_pest::parse;
 use zokrates_pest::Rule;
 #[macro_use]
 extern crate lazy_static;
+
+pub use ast::{
+    Access, ArrayAccess, ArrayType, AssertionStatement, Assignee, AssignmentStatement, BasicType,
+    BinaryExpression, BinaryOperator, CallAccess, ConstantExpression, DefinitionStatement,
+    Expression, File, Function, IdentifierExpression, ImportDirective, ImportSource,
+    InlineArrayExpression, IterationStatement, MultiAssignmentStatement, Parameter,
+    PostfixExpression, ReturnStatement, Statement, TernaryExpression, Type, UnaryExpression,
+    UnaryOperator, Visibility,
+};
 
 mod ast {
     use from_pest::ConversionError;
@@ -63,7 +73,8 @@ mod ast {
             Rule::op_gt => Expression::binary(BinaryOperator::Gt, lhs, rhs, span),
             Rule::op_inclusive_or => Expression::binary(BinaryOperator::Or, lhs, rhs, span),
             Rule::op_exclusive_or => Expression::binary(BinaryOperator::Xor, lhs, rhs, span),
-            _ => unimplemented!(),
+            Rule::op_and => Expression::binary(BinaryOperator::And, lhs, rhs, span),
+            _ => unreachable!(),
         })
     }
 
@@ -107,10 +118,27 @@ mod ast {
                             r => unreachable!("`primary_expression` should contain one of [`constant`, `identifier`], found {:#?}", r),
                         }
                     }
-                    Rule::postfix_expression => {
-                    	unimplemented!()
+                    Rule::postfix_expression => Expression::Postfix(
+                        PostfixExpression::from_pest(&mut pair.into_inner()).unwrap(),
+                    ),
+                    Rule::inline_array_expression => Expression::InlineArray(
+                        InlineArrayExpression::from_pest(&mut pair.into_inner()).unwrap(),
+                    ),
+                    Rule::unary_expression => {
+                        let span = next.as_span();
+                        let mut inner = next.into_inner();
+                        let op = match inner.next().unwrap().as_rule() {
+                            Rule::op_unary => UnaryOperator::from_pest(&mut pair.into_inner().next().unwrap().into_inner()).unwrap(),
+                            r => unreachable!("`unary_expression` should yield `op_unary`, found {:#?}", r)
+                        };
+                        let expression = build_factor(inner.next().unwrap());
+                        Expression::Unary(UnaryExpression {
+                            op,
+                            expression,
+                            span
+                        })
                     },
-                    r => unreachable!("`term` should contain one of [`expression`, `conditional_expression`, `primary_expression`, `postfix_expression`], found {:#?}", r)
+                    r => unreachable!("`term` should contain one of [`expression`, `conditional_expression`, `primary_expression`, `postfix_expression`, `inline_array_expression`, `unary_expression`], found {:#?}", r)
                 }
             }
             r => unreachable!(
@@ -120,63 +148,177 @@ mod ast {
         })
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::file))]
     pub struct File<'ast> {
-        pub imports: Vec<ImportDirective>,
-        pub functions: Vec<FunctionDefinition<'ast>>,
+        pub imports: Vec<ImportDirective<'ast>>,
+        pub functions: Vec<Function<'ast>>,
         pub eoi: EOI,
         #[pest_ast(outer())]
         pub span: Span<'ast>,
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::function_definition))]
-    pub struct FunctionDefinition<'ast> {
+    pub struct Function<'ast> {
         pub id: IdentifierExpression<'ast>,
-        pub returns: Option<Vec<Type>>,
+        pub parameters: Vec<Parameter<'ast>>,
+        pub returns: Vec<Type<'ast>>,
         pub statements: Vec<Statement<'ast>>,
         #[pest_ast(outer())]
         pub span: Span<'ast>,
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::import_directive))]
-    pub struct ImportDirective {}
-
-    #[derive(Debug, FromPest, PartialEq)]
-    #[pest_ast(rule(Rule::type_name))]
-    pub enum Type {
-        Field,
-        Boolean,
+    pub struct ImportDirective<'ast> {
+        pub source: ImportSource<'ast>,
+        pub alias: Option<IdentifierExpression<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::import_source))]
+    pub struct ImportSource<'ast> {
+        #[pest_ast(outer(with(span_into_str)))]
+        pub value: String,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::ty))]
+    pub enum Type<'ast> {
+        Basic(BasicType<'ast>),
+        Array(ArrayType<'ast>),
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::ty_basic))]
+    pub enum BasicType<'ast> {
+        Field(FieldType),
+        Boolean(BooleanType<'ast>),
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::ty_field))]
+    pub struct FieldType {}
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::ty_array))]
+    pub struct ArrayType<'ast> {
+        pub ty: BasicType<'ast>,
+        pub size: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::ty_bool))]
+    pub struct BooleanType<'ast> {
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::parameter))]
+    pub struct Parameter<'ast> {
+        pub visibility: Option<Visibility>,
+        pub ty: Type<'ast>,
+        pub id: IdentifierExpression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::vis))]
+    pub enum Visibility {
+        Public(PublicVisibility),
+        Private(PrivateVisibility),
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::vis_public))]
+    pub struct PublicVisibility {}
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::vis_private))]
+    pub struct PrivateVisibility {}
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::statement))]
     pub enum Statement<'ast> {
         Return(ReturnStatement<'ast>),
+        Definition(DefinitionStatement<'ast>),
+        Assertion(AssertionStatement<'ast>),
+        Iteration(IterationStatement<'ast>),
+        Assignment(AssignmentStatement<'ast>),
+        MultiAssignment(MultiAssignmentStatement<'ast>),
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::definition_statement))]
+    pub struct DefinitionStatement<'ast> {
+        pub ty: Type<'ast>,
+        pub id: IdentifierExpression<'ast>,
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::assignment_statement))]
+    pub struct AssignmentStatement<'ast> {
+        pub assignee: Assignee<'ast>,
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::expression_statement))]
+    pub struct AssertionStatement<'ast> {
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::iteration_statement))]
+    pub struct IterationStatement<'ast> {
+        pub ty: Type<'ast>,
+        pub index: IdentifierExpression<'ast>,
+        pub from: Expression<'ast>,
+        pub to: Expression<'ast>,
+        pub statements: Vec<Statement<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::multi_assignment_statement))]
+    pub struct MultiAssignmentStatement<'ast> {
+        pub lhs: Vec<OptionallyTypedIdentifier<'ast>>,
+        pub function_id: IdentifierExpression<'ast>,
+        pub arguments: Vec<Expression<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::return_statement))]
     pub struct ReturnStatement<'ast> {
-        pub expressions: ExpressionList<'ast>,
+        pub expressions: Vec<Expression<'ast>>,
         #[pest_ast(outer())]
         pub span: Span<'ast>,
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
-    #[pest_ast(rule(Rule::expression_list))]
-    pub struct ExpressionList<'ast> {
-        pub values: Vec<Expression<'ast>>,
-        #[pest_ast(outer())]
-        pub span: Span<'ast>,
-    }
-
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Clone)]
     pub enum BinaryOperator {
         Xor,
         Or,
+        And,
         Add,
         Sub,
         Mul,
@@ -190,30 +332,104 @@ mod ast {
         Pow,
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, FromPest, Clone)]
+    #[pest_ast(rule(Rule::op_unary))]
+    pub enum UnaryOperator<'ast> {
+        Not(Not<'ast>),
+    }
+
+    #[derive(Debug, PartialEq, FromPest, Clone)]
+    #[pest_ast(rule(Rule::op_not))]
+    pub struct Not<'ast> {
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, PartialEq, Clone)]
     pub enum Expression<'ast> {
         Ternary(TernaryExpression<'ast>),
         Binary(BinaryExpression<'ast>),
+        Postfix(PostfixExpression<'ast>),
         Identifier(IdentifierExpression<'ast>),
         Constant(ConstantExpression<'ast>),
+        InlineArray(InlineArrayExpression<'ast>),
+        Unary(UnaryExpression<'ast>),
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::postfix_expression))]
+    pub struct PostfixExpression<'ast> {
+        pub id: IdentifierExpression<'ast>,
+        pub access: Vec<Access<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::unary_expression))]
+    pub struct UnaryExpression<'ast> {
+        pub op: UnaryOperator<'ast>,
+        pub expression: Box<Expression<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::inline_array_expression))]
+    pub struct InlineArrayExpression<'ast> {
+        pub expressions: Vec<Expression<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::optionally_typed_identifier))]
+    pub struct OptionallyTypedIdentifier<'ast> {
+        pub ty: Option<Type<'ast>>,
+        pub id: IdentifierExpression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::access))]
+    pub enum Access<'ast> {
+        Call(CallAccess<'ast>),
+        Select(ArrayAccess<'ast>),
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::call_access))]
+    pub struct CallAccess<'ast> {
+        pub expressions: Vec<Expression<'ast>>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::array_access))]
+    pub struct ArrayAccess<'ast> {
+        pub expression: Expression<'ast>,
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
+    #[derive(Debug, PartialEq, Clone)]
     pub struct BinaryExpression<'ast> {
-        op: BinaryOperator,
-        left: Box<Expression<'ast>>,
-        right: Box<Expression<'ast>>,
-        span: Span<'ast>,
+        pub op: BinaryOperator,
+        pub left: Box<Expression<'ast>>,
+        pub right: Box<Expression<'ast>>,
+        pub span: Span<'ast>,
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::conditional_expression))]
     pub struct TernaryExpression<'ast> {
-        first: Box<Expression<'ast>>,
-        second: Box<Expression<'ast>>,
-        third: Box<Expression<'ast>>,
+        pub first: Box<Expression<'ast>>,
+        pub second: Box<Expression<'ast>>,
+        pub third: Box<Expression<'ast>>,
         #[pest_ast(outer())]
-        span: Span<'ast>,
+        pub span: Span<'ast>,
     }
 
     impl<'ast> Expression<'ast> {
@@ -251,6 +467,9 @@ mod ast {
                 Expression::Identifier(i) => &i.span,
                 Expression::Constant(c) => &c.span,
                 Expression::Ternary(t) => &t.span,
+                Expression::Postfix(p) => &p.span,
+                Expression::InlineArray(a) => &a.span,
+                Expression::Unary(u) => &u.span,
             }
         }
     }
@@ -278,7 +497,7 @@ mod ast {
         }
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::constant))]
     pub struct ConstantExpression<'ast> {
         #[pest_ast(outer(with(span_into_str)))]
@@ -287,7 +506,7 @@ mod ast {
         pub span: Span<'ast>,
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::identifier))]
     pub struct IdentifierExpression<'ast> {
         #[pest_ast(outer(with(span_into_str)))]
@@ -296,26 +515,44 @@ mod ast {
         pub span: Span<'ast>,
     }
 
+    #[derive(Debug, FromPest, PartialEq, Clone)]
+    #[pest_ast(rule(Rule::assignee))]
+    pub struct Assignee<'ast> {
+        pub id: IdentifierExpression<'ast>, // a
+        pub indices: Vec<Expression<'ast>>, // [42 + x][31][7]
+        #[pest_ast(outer())]
+        pub span: Span<'ast>,
+    }
+
     fn span_into_str(span: Span) -> String {
         span.as_str().to_string()
     }
 
-    #[derive(Debug, FromPest, PartialEq)]
+    #[derive(Debug, FromPest, PartialEq, Clone)]
     #[pest_ast(rule(Rule::EOI))]
     pub struct EOI;
 }
 
-struct FieldPrimeProg<'ast>(ast::File<'ast>);
+struct Prog<'ast>(ast::File<'ast>);
 
-impl<'ast> From<Pairs<'ast, Rule>> for FieldPrimeProg<'ast> {
-    fn from(mut pairs: Pairs<'ast, Rule>) -> FieldPrimeProg<'ast> {
-        FieldPrimeProg(ast::File::from_pest(&mut pairs).unwrap())
+impl<'ast> From<Pairs<'ast, Rule>> for Prog<'ast> {
+    fn from(mut pairs: Pairs<'ast, Rule>) -> Prog<'ast> {
+        Prog(ast::File::from_pest(&mut pairs).unwrap())
     }
 }
 
-pub fn generate_ast(input: &str) -> Result<ast::File, Error<Rule>> {
-    let parse_tree = parse(input).map_err(|e| e)?;
-    Ok(FieldPrimeProg::from(parse_tree).0)
+#[derive(PartialEq, Clone, Debug)]
+pub struct Error(PestError<Rule>);
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub fn generate_ast(input: &str) -> Result<ast::File, Error> {
+    let parse_tree = parse(input).map_err(|e| Error(e))?;
+    Ok(Prog::from(parse_tree).0)
 }
 
 #[cfg(test)]
@@ -323,6 +560,26 @@ mod tests {
     use super::ast::*;
     use super::*;
     use pest::Span;
+
+    #[test]
+    fn examples() {
+        use glob::glob;
+        use std::fs;
+        use std::io::Read;
+        // Traverse all .code files in examples dir
+        for entry in glob("examples/**/*.code").expect("Failed to read glob pattern") {
+            match entry {
+                Ok(path) => {
+                    println!("Parsing {:?}", path.display());
+                    let mut file = fs::File::open(path).unwrap();
+                    let mut data = String::new();
+                    file.read_to_string(&mut data).unwrap();
+                    let _res = generate_ast(&data).unwrap();
+                }
+                Err(e) => println!("{:?}", e),
+            }
+        }
+    }
 
     impl<'ast> Expression<'ast> {
         pub fn add(left: Expression<'ast>, right: Expression<'ast>, span: Span<'ast>) -> Self {
@@ -360,32 +617,37 @@ mod tests {
         assert_eq!(
             generate_ast(&source),
             Ok(File {
-                functions: vec![FunctionDefinition {
+                functions: vec![Function {
                     id: IdentifierExpression {
                         value: String::from("main"),
                         span: Span::new(&source, 33, 37).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
-                        expressions: ExpressionList {
-                            values: vec![Expression::add(
-                                Expression::Constant(ConstantExpression {
-                                    value: String::from("1"),
-                                    span: Span::new(&source, 59, 60).unwrap()
-                                }),
-                                Expression::Constant(ConstantExpression {
-                                    value: String::from("1"),
-                                    span: Span::new(&source, 63, 64).unwrap()
-                                }),
-                                Span::new(&source, 59, 64).unwrap()
-                            )],
-                            span: Span::new(&source, 59, 64).unwrap(),
-                        },
+                        expressions: vec![Expression::add(
+                            Expression::Constant(ConstantExpression {
+                                value: String::from("1"),
+                                span: Span::new(&source, 59, 60).unwrap()
+                            }),
+                            Expression::Constant(ConstantExpression {
+                                value: String::from("1"),
+                                span: Span::new(&source, 63, 64).unwrap()
+                            }),
+                            Span::new(&source, 59, 64).unwrap()
+                        )],
                         span: Span::new(&source, 52, 64).unwrap(),
                     })],
                     span: Span::new(&source, 29, source.len()).unwrap(),
                 }],
-                imports: vec![ImportDirective {}],
+                imports: vec![ImportDirective {
+                    source: ImportSource {
+                        value: String::from("foo"),
+                        span: Span::new(&source, 8, 11).unwrap()
+                    },
+                    alias: None,
+                    span: Span::new(&source, 0, 29).unwrap()
+                }],
                 eoi: EOI {},
                 span: Span::new(&source, 0, 65).unwrap()
             })
@@ -400,46 +662,51 @@ mod tests {
         assert_eq!(
             generate_ast(&source),
             Ok(File {
-                functions: vec![FunctionDefinition {
+                functions: vec![Function {
                     id: IdentifierExpression {
                         value: String::from("main"),
                         span: Span::new(&source, 33, 37).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
-                        expressions: ExpressionList {
-                            values: vec![Expression::add(
+                        expressions: vec![Expression::add(
+                            Expression::Constant(ConstantExpression {
+                                value: String::from("1"),
+                                span: Span::new(&source, 59, 60).unwrap()
+                            }),
+                            Expression::mul(
                                 Expression::Constant(ConstantExpression {
-                                    value: String::from("1"),
-                                    span: Span::new(&source, 59, 60).unwrap()
+                                    value: String::from("2"),
+                                    span: Span::new(&source, 63, 64).unwrap()
                                 }),
-                                Expression::mul(
+                                Expression::pow(
                                     Expression::Constant(ConstantExpression {
-                                        value: String::from("2"),
-                                        span: Span::new(&source, 63, 64).unwrap()
+                                        value: String::from("3"),
+                                        span: Span::new(&source, 67, 68).unwrap()
                                     }),
-                                    Expression::pow(
-                                        Expression::Constant(ConstantExpression {
-                                            value: String::from("3"),
-                                            span: Span::new(&source, 67, 68).unwrap()
-                                        }),
-                                        Expression::Constant(ConstantExpression {
-                                            value: String::from("4"),
-                                            span: Span::new(&source, 72, 73).unwrap()
-                                        }),
-                                        Span::new(&source, 67, 73).unwrap()
-                                    ),
-                                    Span::new(&source, 63, 73).unwrap()
+                                    Expression::Constant(ConstantExpression {
+                                        value: String::from("4"),
+                                        span: Span::new(&source, 72, 73).unwrap()
+                                    }),
+                                    Span::new(&source, 67, 73).unwrap()
                                 ),
-                                Span::new(&source, 59, 73).unwrap()
-                            )],
-                            span: Span::new(&source, 59, 73).unwrap(),
-                        },
+                                Span::new(&source, 63, 73).unwrap()
+                            ),
+                            Span::new(&source, 59, 73).unwrap()
+                        )],
                         span: Span::new(&source, 52, 73).unwrap(),
                     })],
                     span: Span::new(&source, 29, 74).unwrap(),
                 }],
-                imports: vec![ImportDirective {}],
+                imports: vec![ImportDirective {
+                    source: ImportSource {
+                        value: String::from("foo"),
+                        span: Span::new(&source, 8, 11).unwrap()
+                    },
+                    alias: None,
+                    span: Span::new(&source, 0, 29).unwrap()
+                }],
                 eoi: EOI {},
                 span: Span::new(&source, 0, 74).unwrap()
             })
@@ -454,36 +721,41 @@ mod tests {
         assert_eq!(
             generate_ast(&source),
             Ok(File {
-                functions: vec![FunctionDefinition {
+                functions: vec![Function {
                     id: IdentifierExpression {
                         value: String::from("main"),
                         span: Span::new(&source, 33, 37).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
-                        expressions: ExpressionList {
-                            values: vec![Expression::if_else(
-                                Expression::Constant(ConstantExpression {
-                                    value: String::from("1"),
-                                    span: Span::new(&source, 62, 63).unwrap()
-                                }),
-                                Expression::Constant(ConstantExpression {
-                                    value: String::from("2"),
-                                    span: Span::new(&source, 69, 70).unwrap()
-                                }),
-                                Expression::Constant(ConstantExpression {
-                                    value: String::from("3"),
-                                    span: Span::new(&source, 76, 77).unwrap()
-                                }),
-                                Span::new(&source, 59, 80).unwrap()
-                            )],
-                            span: Span::new(&source, 59, 80).unwrap(),
-                        },
+                        expressions: vec![Expression::if_else(
+                            Expression::Constant(ConstantExpression {
+                                value: String::from("1"),
+                                span: Span::new(&source, 62, 63).unwrap()
+                            }),
+                            Expression::Constant(ConstantExpression {
+                                value: String::from("2"),
+                                span: Span::new(&source, 69, 70).unwrap()
+                            }),
+                            Expression::Constant(ConstantExpression {
+                                value: String::from("3"),
+                                span: Span::new(&source, 76, 77).unwrap()
+                            }),
+                            Span::new(&source, 59, 80).unwrap()
+                        )],
                         span: Span::new(&source, 52, 80).unwrap(),
                     })],
                     span: Span::new(&source, 29, 81).unwrap(),
                 }],
-                imports: vec![ImportDirective {}],
+                imports: vec![ImportDirective {
+                    source: ImportSource {
+                        value: String::from("foo"),
+                        span: Span::new(&source, 8, 11).unwrap()
+                    },
+                    alias: None,
+                    span: Span::new(&source, 0, 29).unwrap()
+                }],
                 eoi: EOI {},
                 span: Span::new(&source, 0, 81).unwrap()
             })
@@ -497,20 +769,18 @@ mod tests {
         assert_eq!(
             generate_ast(&source),
             Ok(File {
-                functions: vec![FunctionDefinition {
+                functions: vec![Function {
                     id: IdentifierExpression {
                         value: String::from("main"),
                         span: Span::new(&source, 4, 8).unwrap()
                     },
-                    returns: Some(vec![Type::Field]),
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
                     statements: vec![Statement::Return(ReturnStatement {
-                        expressions: ExpressionList {
-                            values: vec![Expression::Constant(ConstantExpression {
-                                value: String::from("1"),
-                                span: Span::new(&source, 31, 32).unwrap()
-                            })],
-                            span: Span::new(&source, 30, 33).unwrap(),
-                        },
+                        expressions: vec![Expression::Constant(ConstantExpression {
+                            value: String::from("1"),
+                            span: Span::new(&source, 31, 32).unwrap()
+                        })],
                         span: Span::new(&source, 23, 33).unwrap(),
                     })],
                     span: Span::new(&source, 0, 34).unwrap(),
@@ -520,5 +790,87 @@ mod tests {
                 span: Span::new(&source, 0, 34).unwrap()
             })
         );
+    }
+
+    #[test]
+    fn multidef() {
+        let source = r#"def main() -> (field): field a, b = foo(1, 2 + 3)
+"#;
+        assert_eq!(
+            generate_ast(&source),
+            Ok(File {
+                functions: vec![Function {
+                    id: IdentifierExpression {
+                        value: String::from("main"),
+                        span: Span::new(&source, 4, 8).unwrap()
+                    },
+                    parameters: vec![],
+                    returns: vec![Type::Basic(BasicType::Field(FieldType {}))],
+                    statements: vec![Statement::MultiAssignment(MultiAssignmentStatement {
+                        function_id: IdentifierExpression {
+                            value: String::from("foo"),
+                            span: Span::new(&source, 36, 39).unwrap()
+                        },
+                        lhs: vec![
+                            OptionallyTypedIdentifier {
+                                ty: Some(Type::Basic(BasicType::Field(FieldType {}))),
+                                id: IdentifierExpression {
+                                    value: String::from("a"),
+                                    span: Span::new(&source, 29, 30).unwrap(),
+                                },
+                                span: Span::new(&source, 23, 30).unwrap()
+                            },
+                            OptionallyTypedIdentifier {
+                                ty: None,
+                                id: IdentifierExpression {
+                                    value: String::from("b"),
+                                    span: Span::new(&source, 32, 33).unwrap(),
+                                },
+                                span: Span::new(&source, 32, 33).unwrap()
+                            },
+                        ],
+                        arguments: vec![
+                            Expression::Constant(ConstantExpression {
+                                value: String::from("1"),
+                                span: Span::new(&source, 40, 41).unwrap()
+                            }),
+                            Expression::add(
+                                Expression::Constant(ConstantExpression {
+                                    value: String::from("2"),
+                                    span: Span::new(&source, 43, 44).unwrap()
+                                }),
+                                Expression::Constant(ConstantExpression {
+                                    value: String::from("3"),
+                                    span: Span::new(&source, 47, 48).unwrap()
+                                }),
+                                Span::new(&source, 43, 48).unwrap()
+                            ),
+                        ],
+                        span: Span::new(&source, 23, 49).unwrap()
+                    })],
+                    span: Span::new(&source, 0, 50).unwrap(),
+                }],
+                imports: vec![],
+                eoi: EOI {},
+                span: Span::new(&source, 0, 50).unwrap()
+            })
+        );
+    }
+
+    #[test]
+    fn playground() {
+        let source = r#"import "heyman" as yo
+        def main(private field[23] a) -> (bool[234 + 6]):
+        field a = 1
+        a[32 + x][55] = y
+        for field i in 0..3 do
+               a == 1 + 2 + 3+ 4+ 5+ 6+ 6+ 7+ 8 + 4+ 5+ 3+ 4+ 2+ 3 
+        endfor
+        a == 1
+        return a
+"#;
+        let res = generate_ast(&source);
+        println!("{:#?}", generate_ast(&source));
+        assert!(res.is_ok());
     }
 }
